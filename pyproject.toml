@@ -1,0 +1,29 @@
+[project]
+name = "db-lab2"
+version = "0.0.1"
+authors = [
+    { name = "Sebastian Tabares Amaya", email = "me@syta.co" },
+]
+description = "a Simple lock manager for concurrent transactions"
+readme = "README.md"
+requires-python = ">=3.8"
+dependencies = [
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+]
+
+[build-system]
+requires = ["setuptools>=42"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
