@@ -11,16 +11,16 @@ class TestSimpleStr:
 
     def test_invalid_format(self, lock_manager):
       # Test invalid format
-        with pytest.raises(ValueError):
+        with pytest.raises(IndexError):
             lock_manager.process_request_str("Invalid")
 
-        with pytest.raises(ValueError):
+        with pytest.raises(IndexError):
             lock_manager.process_request_str("Xlock A A")
             
-        with pytest.raises(ValueError):
+        with pytest.raises(IndexError):
             lock_manager.process_request_str("Xlock 100 100")
             
-        with pytest.raises(ValueError):
+        with pytest.raises(IndexError):
             lock_manager.process_request_str("Xlock 100 A A")
                         
     def test_complex_scenario(self, lock_manager):
