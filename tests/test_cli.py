@@ -17,6 +17,14 @@ def test_processor_basic_operation():
         assert test_output.getvalue() == "processed_line1\nprocessed_line2\n"
         assert test_error.getvalue() == ""
 
+"""
+Test the stream processor's behavior when handling an empty input stream.
+
+Verifies that:
+- No output is generated when input is empty
+- No error messages are produced
+- The stream processor handles zero-length inputs gracefully
+"""
 def test_processor_empty_input():
     """Test behavior with empty input."""
     test_input = StringIO("")

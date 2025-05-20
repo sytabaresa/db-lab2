@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""
-Unbuffered line processor - reads stdin, processes each line immediately,
-and streams results to stdout without buffering.
-"""
+"""Process lines from input_stream and write to output_stream immediately.
 
+Reads from input_stream line by line, processes each line through the lock manager,
+and writes results to output_stream without buffering. Errors are written to error_stream.
+"""
 import sys
 from typing import Iterable, TextIO
 from lock_manager import LockManager
