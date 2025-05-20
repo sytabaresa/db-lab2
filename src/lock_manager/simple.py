@@ -131,7 +131,7 @@ class LockManager:
         return cmds
 
     def commands_mapping(self, cmd: Command):
-        """Adapter for the commands returned from business logic"""
+        """Out Adapter for the commands returned from business logic"""
         mapping = {
             'transaction_started': lambda t, r: f"Start {t} : Transaction {t} started",
             'transaction_ended': lambda t, r: f"End {t} : Transaction {t} ended",
@@ -199,7 +199,7 @@ class LockManager:
         return cmds
 
     def process_request_str(self, request_str: str) -> list[str]:
-
+        """Adapter for business logic, IN/OUT conversion"""
         # Using regex groups
         pattern = r"^(\w+) (\d+) ?(\w+)?_*$"
         match = re.search(pattern, request_str)

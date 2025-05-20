@@ -163,7 +163,7 @@ class TestSimple:
         lock_manager.process_request_str("Start 200")
         lock_manager.process_request_str("XLock 100 A")
         lock_manager.process_request_str("XLock 200 A")  # This will wait
-        
+
         # Test unlock
         output = lock_manager.process_request_str("End 200")
         assert "End 200 : Transaction 200 ended" in output
@@ -196,29 +196,6 @@ class TestSimple:
         output = lock_manager.process_request_str("Unlock 200 A")
         assert "S-Lock granted to 300" in output
 
-    def test_complex_scenario(self, lock_manager):
-        # Test the exact scenario from the problem statement
-        outputs = []
-        outputs.append(lock_manager.process_request_str("Start 100")) # 0
-        outputs.append(lock_manager.process_request_str("Start 200")) # 1
-        outputs.append(lock_manager.process_request_str("SLock 100 A")) # 2
-        outputs.append(lock_manager.process_request_str("XLock 200 A")) # 3
-        outputs.append(lock_manager.process_request_str("Unlock 100 A")) # 4
-        outputs.append(lock_manager.process_request_str("XLock 100 B")) # 5
-        outputs.append(lock_manager.process_request_str("XLock 200 B")) # 6
-        outputs.append(lock_manager.process_request_str("XLock 100 A")) # 7
-        outputs.append(lock_manager.process_request_str("End 100")) # 8
-        outputs.append(lock_manager.process_request_str("Unlock 200 A")) # 9
-        outputs.append(lock_manager.process_request_str("End 200")) # 10
-
-        # Verify key outputs
-        assert "Transaction 100 started" in outputs[0]
-        assert "Lock granted" in outputs[2]
-        assert "Waiting for lock" in outputs[3]
-        assert "X-Lock granted to 200" in outputs[4]
-        assert "X-Lock on B granted to 200" in outputs[8]
-        assert "Transaction 200 ended" in outputs[10]
-
     def test_invalid_requests(self, lock_manager):
         # Test lock requests for non-existent transactions
         with pytest.raises(ValueError, match="Transaction not found"):
@@ -241,14 +218,37 @@ class TestSimple:
 
         with pytest.raises(IndexError):
             lock_manager.process_request_str("Xlock A A")
-            
+
         with pytest.raises(IndexError):
             lock_manager.process_request_str("Xlock 100 100")
-            
+
         with pytest.raises(IndexError):
             lock_manager.process_request_str("Xlock 100 A A")
-                        
-    def test_example_scenario(self, lock_manager):
+
+    def test_complex_scenario(self, lock_manager):
+            # Test the exact scenario from the problem statement
+        outputs = []
+        outputs.append(lock_manager.process_request_str("Start 100"))  # 0
+        outputs.append(lock_manager.process_request_str("Start 200"))  # 1
+        outputs.append(lock_manager.process_request_str("SLock 100 A"))  # 2
+        outputs.append(lock_manager.process_request_str("XLock 200 A"))  # 3
+        outputs.append(lock_manager.process_request_str("Unlock 100 A"))  # 4
+        outputs.append(lock_manager.process_request_str("XLock 100 B"))  # 5
+        outputs.append(lock_manager.process_request_str("XLock 200 B"))  # 6
+        outputs.append(lock_manager.process_request_str("XLock 100 A"))  # 7
+        outputs.append(lock_manager.process_request_str("End 100"))  # 8
+        outputs.append(lock_manager.process_request_str("Unlock 200 A"))  # 9
+        outputs.append(lock_manager.process_request_str("End 200"))  # 10
+
+        # Verify key outputs
+        assert "Transaction 100 started" in outputs[0]
+        assert "Lock granted" in outputs[2]
+        assert "Waiting for lock" in outputs[3]
+        assert "X-Lock granted to 200" in outputs[4]
+        assert "X-Lock on B granted to 200" in outputs[8]
+        assert "Transaction 200 ended" in outputs[10]
+
+    def test_exercise_example_scenario(self, lock_manager):
         program = [
             ('Start 100', 'Start 100 : Transaction 100 started'),
             ('Start 200', 'Start 200 : Transaction 200 started'),
@@ -275,7 +275,8 @@ class TestSimple:
 
         requests = [t[0] for t in program]
         test_outputs = ['\n'.join(t[1]) if type(t[1]) == list else t[1]
-                   for t in program]
+                        for t in program]
 
         for i in range(len(program)):
-            assert test_outputs[i] == lock_manager.process_request_str(requests[i])
+            assert test_outputs[i] == lock_manager.process_request_str(
+                requests[i])
