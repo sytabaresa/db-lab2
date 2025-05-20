@@ -157,6 +157,26 @@ class TestSimple:
         assert 100 not in lock_manager.transactions
         assert "A" not in lock_manager.held_locks.get(100, {})
 
+    def test_end_waiting_transaction(self, lock_manager):
+        # Setup
+        lock_manager.process_request_str("Start 100")
+        lock_manager.process_request_str("Start 200")
+        lock_manager.process_request_str("XLock 200 A")
+        lock_manager.process_request_str("XLock 100 A")  # This will wait
+        
+        # Test unlock
+        output = lock_manager.process_request_str("End 100")
+        assert "End 100 : Transaction 100 ended" in output
+        assert "Release" not in output
+        assert "granted" not in output
+        assert ("A", States.xlock) in [(k, v)
+                                       for k, v in lock_manager.held_locks[200].items()]
+        assert 100 not in lock_manager.transactions
+        assert "A" not in lock_manager.held_locks.get(100, {})
+        assert "A" in lock_manager.held_locks.get(200, {})
+
+
+
     def test_fifo_waiting_policy(self, lock_manager):
         # Setup
         lock_manager.process_request_str("Start 100")

@@ -46,13 +46,15 @@ class LockManager:
                 if req is Events.START:
                     self.transactions.append(transaction)
                     cmds.append(Command('transaction_started', transaction))
-                else:
+                elif req is Events.END:
                     raise ValueError(
                         f"Transaction {transaction} not started")
             # init state
             elif transaction in self.transactions:
                 if req is Events.END:
                     cmds.append(Command('transaction_ended', transaction))
+                    
+                    # Unlock all resources that this transaction has
                     res = list(self.held_locks.get(transaction).keys())
                     for r in res:
                         _cmds = self.process_request(
@@ -63,6 +65,7 @@ class LockManager:
                         if 1 < len(_cmds):
                             cmds.append(_cmds[1])
                     self.transactions.remove(transaction)
+                    del self.held_locks[transaction]
                 else:
                     raise ValueError(
                         f"Transaction {transaction} already started")
