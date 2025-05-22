@@ -21,6 +21,7 @@ class Command:
     cmd: str
     transaction: int = None
     resource: str = None
+    lock_type: States = None
     extra: dict = None
 
 
@@ -55,18 +56,19 @@ class LockManager:
                     cmds.append(Command('transaction_ended', transaction))
 
                     # Unlock all resources that this transaction locks
-                    locked_resources = list(self.held_locks.get(transaction, {}).keys())
+                    locked_resources = list(
+                        self.held_locks.get(transaction, {}).keys())
                     for r in locked_resources:
                         _cmds = self.process_request(
                             Events.UNLOCK, transaction, r)
                         if 0 < len(_cmds):
                             out = _cmds[0]
                             cmds.append(
-                                Command(f"release_{out.cmd}", out.transaction, out.resource))
+                                Command(f"release_{out.cmd}", out.transaction, out.resource, out.lock_type))
                         if 1 < len(_cmds):
                             out = _cmds[1]
                             cmds.append(
-                                Command(f"resource_{out.cmd}", out.transaction, out.resource))
+                                Command(f"resource_{out.cmd}", out.transaction, out.resource, out.lock_type))
 
                     # Clean waiting locks
                     for xt in self.resource_fifo.values():
@@ -99,7 +101,7 @@ class LockManager:
                 if req is Events.SLOCK:
                     if self.held_locks.get(transaction, {}).get(resource):
                         cmds.append(
-                            Command('dup_slock', transaction, resource))
+                            Command('duplicate', transaction, resource, States.slock))
                     else:
                         cmds.extend(
                             self.lock_resource(transaction, resource, States.slock))
@@ -120,7 +122,7 @@ class LockManager:
                 elif req is Events.XLOCK:
                     if self.held_locks.get(transaction, {}).get(resource):
                         cmds.append(
-                            Command('dup_xlock', transaction, resource))
+                            Command('duplicate', transaction, resource, States.xlock))
                     else:
                         cmds.extend(
                             self.wait_for_lock(transaction, resource, States.xlock, States.xlock))
@@ -133,27 +135,20 @@ class LockManager:
     def commands_mapping(self, cmd: Command):
         """Out Adapter for the commands returned from business logic"""
         mapping = {
-            'transaction_started': lambda t, r: f"Start {t} : Transaction {t} started",
-            'transaction_ended': lambda t, r: f"End {t} : Transaction {t} ended",
-            'granted_slock': lambda t, r: f"SLock {t} {r}: Lock granted",
-            'granted_xlock': lambda t, r: f"XLock {t} {r}: Lock granted",
-            'granted_to_slock': lambda t, r: f"S-Lock granted to {t}",
-            'granted_to_xlock': lambda t, r: f"X-Lock granted to {t}",
-            'resource_granted_to_xlock': lambda t, r: f"X-Lock on {r} granted to {t}",
-            'resource_granted_to_slock': lambda t, r: f"S-Lock on {r} granted to {t}",
-            'unlocked_slock': lambda t, r: f"Unlock {t} {r}: Lock released",
-            'unlocked_xlock': lambda t, r: f"Unlock {t} {r}: Lock released",
-            'dup_slock': lambda t, r: f"SLock {t} {r}: Lock already held",
-            'dup_xlock': lambda t, r: f"XLock {t} {r}: Lock already held",
-            'release_unlocked_slock': lambda t, r: f"Release S-lock on {r}",
-            'release_unlocked_xlock': lambda t, r: f"Release X-lock on {r}",
-            "waiting_slock": lambda t, r, x: f"SLock {t} {r}: Waiting for lock ({'X-lock' if x['lock_type'] is States.xlock else 'S-lock'} held by: {x['transaction']})",
-            "waiting_xlock": lambda t, r, x: f"XLock {t} {r}: Waiting for lock ({'X-lock' if x['lock_type'] is States.xlock else 'S-lock'} held by: {x['transaction']})",
+            'transaction_started': lambda cmd: f"Start {cmd.transaction} : Transaction {cmd.transaction} started",
+            'transaction_ended': lambda cmd: f"End {cmd.transaction} : Transaction {cmd.transaction} ended",
+            'granted': lambda cmd: f"{'SLock' if cmd.lock_type is States.slock else 'XLock'} {cmd.transaction} {cmd.resource}: Lock granted",
+            'granted_to': lambda cmd: f"{'S-Lock' if cmd.lock_type is States.slock else 'X-Lock'} granted to {cmd.transaction}",
+            'resource_granted_to': lambda cmd: f"{'S-Lock' if cmd.lock_type is States.slock else 'X-Lock'} on {cmd.resource} granted to {cmd.transaction}",
+            'unlocked': lambda cmd: f"Unlock {cmd.transaction} {cmd.resource}: Lock released",
+            'duplicate': lambda cmd: f"{'SLock' if cmd.lock_type is States.slock else 'XLock'} {cmd.transaction} {cmd.resource}: Lock already held",
+            'release_unlocked': lambda cmd: f"Release {'S-lock' if cmd.lock_type is States.slock else 'X-lock'} on {cmd.resource}",
+            "waiting": lambda cmd: f"{'SLock' if cmd.lock_type is States.slock else 'XLock'} {cmd.transaction} {cmd.resource}: " +
+            f"Waiting for lock ({'S-lock' if cmd.extra['lock_type'] is States.slock else 'X-lock'} held by: {cmd.extra['transaction']})",
         }
-        if cmd.extra:
-            return mapping[cmd.cmd](cmd.transaction, cmd.resource, cmd.extra)
-        else:
-            return mapping[cmd.cmd](cmd.transaction, cmd.resource)
+        
+        return mapping[cmd.cmd](cmd)
+
 
     def resource_state(self, resource: str) -> States:
         transactions = list(self.resource_fifo.get(resource, {}).values())
@@ -165,15 +160,15 @@ class LockManager:
             resource] = lock_type
         self.resource_fifo.setdefault(
             resource, {})[transaction] = lock_type
-        return [Command(f"granted_{lock_type.value}", transaction, resource)]
+        return [Command("granted", transaction, resource, lock_type)]
 
     def wait_for_lock(self, transaction: int, resource: str, old_lock_type: States, next_lock_type: States):
         old_transaction = list(
             self.resource_fifo[resource].keys())[0]
         self.resource_fifo[resource][transaction] = next_lock_type
 
-        return [Command(f"waiting_{next_lock_type.value}",
-                        transaction, resource,
+        return [Command("waiting",
+                        transaction, resource, next_lock_type,
                         extra={'lock_type': old_lock_type, 'transaction': old_transaction})]
 
     def grant_next_lock(self, transaction: int, resource: str, lock_type: States):
@@ -182,8 +177,7 @@ class LockManager:
         del self.held_locks[transaction][resource]
         del self.resource_fifo[resource][transaction]
 
-        cmds.append(Command(
-            'unlocked_slock' if lock_type is States.slock else 'unlocked_xlock', transaction, resource))
+        cmds.append(Command('unlocked', transaction, resource, lock_type))
 
         next_transactions = list(
             self.resource_fifo[resource].keys())
@@ -194,7 +188,7 @@ class LockManager:
             self.held_locks.setdefault(next_transaction, {})[
                 resource] = lock_type
             cmds.append(
-                Command(f"granted_to_{lock_type.value}", next_transaction, resource))
+                Command("granted_to", next_transaction, resource, lock_type))
 
         return cmds
 
