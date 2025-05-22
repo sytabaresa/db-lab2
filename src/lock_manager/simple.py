@@ -12,8 +12,8 @@ class Events(Enum):
 
 
 class States(Enum):
-    slock = 'slock'
-    xlock = 'xlock'
+    slock = 'slocked'
+    xlock = 'xlocked'
 
 
 @dataclass
@@ -34,11 +34,11 @@ class LockManager:
 
     def process_request(self, request: str, transaction: int, resource: str = None) -> list[Command]:
         """Business logic, based in transaction and resource FSMs"""
+        cmds = []
         try:
             req = Events(request)
         except ValueError:
-            raise IndexError("Command not valid")
-        cmds = []
+            return [Command("cmd_not_valid", transaction, resource)]
 
         # Transaction FSM
         if not resource:
@@ -48,14 +48,13 @@ class LockManager:
                     self.transactions.append(transaction)
                     cmds.append(Command('transaction_started', transaction))
                 elif req is Events.END:
-                    raise ValueError(
-                        f"Transaction {transaction} not started")
+                    return [Command('not_started', transaction, resource)]
             # init state
             elif transaction in self.transactions:
                 if req is Events.END:
                     cmds.append(Command('transaction_ended', transaction))
 
-                    # Unlock all resources that this transaction locks
+                    # Unlock all resources that this transaction holds
                     locked_resources = list(
                         self.held_locks.get(transaction, {}).keys())
                     for r in locked_resources:
@@ -80,12 +79,11 @@ class LockManager:
                     if self.held_locks.get(transaction):
                         del self.held_locks[transaction]
                 else:
-                    raise ValueError(
-                        f"Transaction {transaction} already started")
+                    return [Command('already_started', transaction, resource)]
         # Resource FSM
         elif resource:
             if transaction not in self.transactions:
-                raise ValueError("Transaction not found")
+                return [Command("not_found", transaction, resource)]
 
             # unlock state
             elif not self.resource_state(resource):
@@ -95,65 +93,106 @@ class LockManager:
                 elif req is Events.XLOCK:
                     cmds.extend(
                         self.lock_resource(transaction, resource, States.xlock))
-
+                elif req is Events.UNLOCK:
+                    cmds.append(
+                        Command('not_locked', transaction, resource))
             # s-Lock state
-            elif self.resource_state(resource) is States.slock:
+            elif self.resource_state(resource)[0][1] is States.slock:
                 if req is Events.SLOCK:
                     if self.held_locks.get(transaction, {}).get(resource):
                         cmds.append(
-                            Command('duplicate', transaction, resource, States.slock))
+                            Command('already_held', transaction, resource, States.slock))
                     else:
                         cmds.extend(
                             self.lock_resource(transaction, resource, States.slock))
                 elif req is Events.XLOCK:
-                    cmds.extend(
-                        self.wait_for_lock(transaction, resource, States.slock, States.xlock))
-
-                elif req is Events.UNLOCK and self.held_locks[transaction][resource] is States.slock:
-                    cmds.extend(
-                        self.grant_next_lock(transaction, resource, States.slock))
-
+                    if self.held_locks.get(transaction, {}).get(resource):
+                        if len(self.resource_state(resource)) < 2:
+                            self.held_locks[transaction][resource] = States.xlock
+                            self.resource_fifo[resource][transaction] = States.xlock
+                            cmds.append(
+                                Command('upgrade', transaction, resource))
+                        # else:
+                        #     cmds.extend(
+                        #         self.wait_for_lock_upgrade(transaction, resource, States.slock, States.xlock))
+                    else:
+                        cmds.extend(
+                            self.wait_for_lock(transaction, resource, States.slock, States.xlock))
+                elif req is Events.UNLOCK:
+                    if self.held_locks.get(transaction, {}).get(resource) is States.slock:
+                        cmds.extend(
+                            self.unlock(transaction, resource, States.slock))
+                        cmds.extend(
+                            self.grant_next_lock(resource, States.slock))
+                    else:
+                        cmds.append(
+                            Command('not_locked_by', transaction, resource))
             # x-Lock state
-            elif self.resource_state(resource) is States.xlock:
+            elif self.resource_state(resource)[0][1] is States.xlock:
                 if req is Events.SLOCK:
-                    cmds.extend(
-                        self.wait_for_lock(transaction, resource, States.xlock, States.slock))
-
+                    if self.held_locks.get(transaction, {}).get(resource):
+                        cmds.append(
+                            Command('already_held', transaction, resource, States.slock))
+                    else:
+                        cmds.extend(
+                            self.wait_for_lock(transaction, resource, States.xlock, States.slock))
                 elif req is Events.XLOCK:
                     if self.held_locks.get(transaction, {}).get(resource):
                         cmds.append(
-                            Command('duplicate', transaction, resource, States.xlock))
+                            Command('already_held', transaction, resource, States.xlock))
                     else:
                         cmds.extend(
                             self.wait_for_lock(transaction, resource, States.xlock, States.xlock))
 
-                if req is Events.UNLOCK and self.held_locks[transaction][resource] is States.xlock:
-                    cmds.extend(
-                        self.grant_next_lock(transaction, resource, States.xlock))
+                if req is Events.UNLOCK:
+                    if self.held_locks.get(transaction, {}).get(resource) is States.xlock:
+                        cmds.extend(
+                            self.unlock(transaction, resource, States.xlock))
+                        cmds.extend(
+                            self.grant_next_lock(resource, States.xlock))
+                    else:
+                        cmds.append(
+                            Command('not_locked_by', transaction, resource))
         return cmds
 
     def commands_mapping(self, cmd: Command):
         """Out Adapter for the commands returned from business logic"""
         mapping = {
+            'cmd_not_valid': lambda cmd: IndexError("Command not valid"),
             'transaction_started': lambda cmd: f"Start {cmd.transaction} : Transaction {cmd.transaction} started",
             'transaction_ended': lambda cmd: f"End {cmd.transaction} : Transaction {cmd.transaction} ended",
+            'not_started': lambda cmd: ValueError(f"Transaction {cmd.transaction} not started"),
+            'already_started': lambda cmd: ValueError(f"Transaction {cmd.transaction} already started"),
+            'not_found': lambda cmd: ValueError("Transaction not found"),
             'granted': lambda cmd: f"{'SLock' if cmd.lock_type is States.slock else 'XLock'} {cmd.transaction} {cmd.resource}: Lock granted",
             'granted_to': lambda cmd: f"{'S-Lock' if cmd.lock_type is States.slock else 'X-Lock'} granted to {cmd.transaction}",
+            'upgrade': lambda cmd: f"Upgraded to XL granted",
+            'waiting_upgrade': lambda cmd: f"Waiting for lock upgrade (S-lock held by: {cmd.extra['transaction']})",
             'resource_granted_to': lambda cmd: f"{'S-Lock' if cmd.lock_type is States.slock else 'X-Lock'} on {cmd.resource} granted to {cmd.transaction}",
             'unlocked': lambda cmd: f"Unlock {cmd.transaction} {cmd.resource}: Lock released",
-            'duplicate': lambda cmd: f"{'SLock' if cmd.lock_type is States.slock else 'XLock'} {cmd.transaction} {cmd.resource}: Lock already held",
+            'already_held': lambda cmd: ValueError(f"{'SLock' if cmd.lock_type is States.slock else 'XLock'} {cmd.transaction} {cmd.resource}: Lock already held"),
             'release_unlocked': lambda cmd: f"Release {'S-lock' if cmd.lock_type is States.slock else 'X-lock'} on {cmd.resource}",
+            'not_locked': lambda cmd: ValueError(f"Cannot unlock {cmd.resource}, not locked"),
+            'not_locked_by': lambda cmd: ValueError(f"Cannot unlock {cmd.resource}, not locked by this transaction"),
             "waiting": lambda cmd: f"{'SLock' if cmd.lock_type is States.slock else 'XLock'} {cmd.transaction} {cmd.resource}: " +
             f"Waiting for lock ({'S-lock' if cmd.extra['lock_type'] is States.slock else 'X-lock'} held by: {cmd.extra['transaction']})",
         }
-        
-        return mapping[cmd.cmd](cmd)
 
+        out_cmd = mapping[cmd.cmd](cmd)
+        if isinstance(out_cmd, Exception):
+            raise out_cmd
+        else:
+            return out_cmd
 
     def resource_state(self, resource: str) -> States:
-        transactions = list(self.resource_fifo.get(resource, {}).values())
-        if len(transactions) > 0:
-            return transactions[0]
+        transactions = list(self.resource_fifo.get(resource, {}).items())
+        out = []
+
+        for tl in transactions:
+            out.append(tl)
+            if tl[1] is States.xlock:
+                break
+        return out
 
     def lock_resource(self, transaction: int, resource: str, lock_type: States):
         self.held_locks.setdefault(transaction, {})[
@@ -163,33 +202,43 @@ class LockManager:
         return [Command("granted", transaction, resource, lock_type)]
 
     def wait_for_lock(self, transaction: int, resource: str, old_lock_type: States, next_lock_type: States):
-        old_transaction = list(
-            self.resource_fifo[resource].keys())[0]
+        old_transaction = self.resource_state(resource)[0][0]
         self.resource_fifo[resource][transaction] = next_lock_type
 
         return [Command("waiting",
                         transaction, resource, next_lock_type,
                         extra={'lock_type': old_lock_type, 'transaction': old_transaction})]
 
-    def grant_next_lock(self, transaction: int, resource: str, lock_type: States):
-        cmds = []
+    def wait_for_lock_upgrade(self, transaction: int, resource: str, old_lock_type: States, next_lock_type: States):
+        old_transaction = self.resource_state(resource)[0][0]
+        self.resource_fifo[resource][transaction] = States.xlock
 
+        return [Command("waiting_upgrade",
+                        transaction, resource, next_lock_type,
+                        extra={'lock_type': old_lock_type, 'transaction': old_transaction})]
+
+
+    def unlock(self, transaction: int, resource: str, lock_type: States):
         del self.held_locks[transaction][resource]
         del self.resource_fifo[resource][transaction]
 
-        cmds.append(Command('unlocked', transaction, resource, lock_type))
+        return [Command('unlocked', transaction, resource, lock_type)]
 
-        next_transactions = list(
-            self.resource_fifo[resource].keys())
-        if len(next_transactions) > 0:
-            next_transaction = next_transactions[0]
-            lock_type = self.resource_fifo[resource][next_transaction]
+    def grant_next_lock(self, resource: str, old_lock_type: States):
+        cmds = []
 
-            self.held_locks.setdefault(next_transaction, {})[
+        remaining_transactions = self.resource_fifo[resource].items()
+        for transaction, lock_type in remaining_transactions:
+            if old_lock_type is States.slock and lock_type is States.slock:
+                break
+
+            self.held_locks.setdefault(transaction, {})[
                 resource] = lock_type
             cmds.append(
-                Command("granted_to", next_transaction, resource, lock_type))
+                Command("granted_to", transaction, resource, lock_type))
 
+            if lock_type is States.xlock:
+                break
         return cmds
 
     def process_request_str(self, request_str: str) -> list[str]:

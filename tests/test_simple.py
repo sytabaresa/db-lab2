@@ -54,8 +54,8 @@ class TestSimple:
                                        for k, v in lock_manager.held_locks[100].items()]
 
         # Test acquiring S lock when already held
-        assert "SLock 100 A: Lock already held" in lock_manager.process_request_str(
-            "SLock 100 A")
+        with pytest.raises(ValueError, match='SLock 100 A: Lock already held'):
+            lock_manager.process_request_str("SLock 100 A")
 
     def test_xlock_acquisition(self, lock_manager):
         # Setup
@@ -68,8 +68,34 @@ class TestSimple:
                                        for k, v in lock_manager.held_locks[100].items()]
 
         # Test acquiring X lock when already held
-        assert "XLock 100 A: Lock already held" in lock_manager.process_request_str(
-            "XLock 100 A")
+        with pytest.raises(ValueError, match='XLock 100 A: Lock already held'):
+            lock_manager.process_request_str("XLock 100 A")
+
+    def test_lock_acquisition(self, lock_manager):
+        # Setup
+        lock_manager.process_request_str("Start 100")
+
+        # Test acquiring S lock
+        assert "SLock 100 A: Lock granted" in lock_manager.process_request_str(
+            "SLock 100 A")
+        assert ("A", States.slock) in [(k, v)
+                                       for k, v in lock_manager.held_locks[100].items()]
+
+        # # Test acquiring S lock when already held
+        # with pytest.raises(ValueError, match='XLock 100 A: Lock already held'):
+        #     lock_manager.process_request_str("XLock 100 A")
+
+        lock_manager.process_request_str("Start 200")
+
+        # Test acquiring S lock
+        assert "XLock 200 B: Lock granted" in lock_manager.process_request_str(
+            "XLock 200 B")
+        assert ("B", States.xlock) in [(k, v)
+                                       for k, v in lock_manager.held_locks[200].items()]
+
+        # Test acquiring S lock when already held
+        with pytest.raises(ValueError, match='SLock 200 B: Lock already held'):
+            lock_manager.process_request_str("SLock 200 B")
 
     def test_slock_no_conflicts(self, lock_manager):
         # Setup
@@ -104,16 +130,15 @@ class TestSimple:
         assert "XLock 200 C: Waiting for lock" in output
         assert "X-lock held by: 100" in output
 
-    @pytest.mark.skip(reason="Temporarily disabled")
     def test_lock_upgrade(self, lock_manager):
         # Setup
         lock_manager.process_request_str("Start 100")
         lock_manager.process_request_str("SLock 100 A")
 
         # Test successful upgrade
-        assert "Lock upgraded" in lock_manager.process_request_str(
+        assert "Upgraded to XL granted" in lock_manager.process_request_str(
             "XLock 100 A")
-        assert ("A", "X") in [(k, v)
+        assert ("A", States.xlock) in [(k, v)
                               for k, v in lock_manager.held_locks[100].items()]
 
         # Setup for blocked upgrade
@@ -121,10 +146,10 @@ class TestSimple:
         lock_manager.process_request_str("SLock 100 B")
         lock_manager.process_request_str("SLock 200 B")
 
-        # Test blocked upgrade
-        output = lock_manager.process_request_str("XLock 100 B")
-        assert "Waiting for lock upgrade" in output
-        assert "S-lock held by: 200" in output
+        # # Test blocked upgrade
+        # output = lock_manager.process_request_str("XLock 100 B")
+        # assert "Waiting for lock upgrade" in output
+        # assert "S-lock held by: 200" in output
 
     def test_unlock(self, lock_manager):
         # Setup
@@ -139,6 +164,14 @@ class TestSimple:
         assert "X-Lock granted to 200" in output
         assert ("A", States.xlock) in [(k, v)
                                        for k, v in lock_manager.held_locks[200].items()]
+
+        # Fails if try unlock non locked resource
+        with pytest.raises(ValueError, match='not locked'):
+            output = lock_manager.process_request_str("Unlock 100 B")
+
+        # Fails if try unlock resource not locked by this transaction
+        with pytest.raises(ValueError, match='not locked[\w ]*transaction'):
+            output = lock_manager.process_request_str("Unlock 100 A")
 
     def test_unlock_end_transaction(self, lock_manager):
         # Setup
@@ -176,31 +209,67 @@ class TestSimple:
         assert 200 not in lock_manager.resource_fifo.get("A", {})
         assert "A" in lock_manager.held_locks.get(100, {})
 
+    def test_not_grant_already_transaction(self, lock_manager):
+        # Setup
+        lock_manager.process_request_str("Start 100")
+        lock_manager.process_request_str("Start 200")
+        lock_manager.process_request_str("SLock 100 A")
+        lock_manager.process_request_str("SLock 200 A")
+
+        # Test unlock
+        output = lock_manager.process_request_str("End 100")
+        assert "Release" in output
+        assert "granted" not in output
+        assert ("A", States.slock) in [(k, v)
+                                       for k, v in lock_manager.held_locks[200].items()]
+        assert 100 not in lock_manager.transactions
+        assert "A" not in lock_manager.held_locks.get(100, {})
+        assert 100 not in lock_manager.resource_fifo.get("A", {})
+        assert "A" in lock_manager.held_locks.get(200, {})
+
     def test_fifo_waiting_policy(self, lock_manager):
         # Setup
         lock_manager.process_request_str("Start 100")
         lock_manager.process_request_str("Start 200")
         lock_manager.process_request_str("Start 300")
+        
+        # Test with shared locks (all shared should be granted)
         lock_manager.process_request_str("XLock 100 A")
 
         # Request locks that will wait
         lock_manager.process_request_str("SLock 200 A")
         lock_manager.process_request_str("SLock 300 A")
 
-        # Release lock - should go to 200 first (FIFO)
+        # Release lock - should go to all shared resources waiting
         output = lock_manager.process_request_str("Unlock 100 A")
         assert "S-Lock granted to 200" in output
-        assert "S-Lock granted to 300" not in output  # Only one should be granted
-
-        # Release again - should go to 300
-        output = lock_manager.process_request_str("Unlock 200 A")
         assert "S-Lock granted to 300" in output
+
+        # Test with exclusive locks (only one exclusive should be granted)
+        lock_manager.process_request_str("SLock 100 B")
+
+        # Request locks that will wait
+        lock_manager.process_request_str("XLock 200 B")
+        lock_manager.process_request_str("XLock 300 B")
+
+        # Release lock - should go to 200 first (FIFO)
+        output = lock_manager.process_request_str("Unlock 100 B")
+        assert "X-Lock granted to 200" in output
+        assert "X-Lock granted to 300" not in output
+        
+        # Release again - should go to 300
+        output = lock_manager.process_request_str("Unlock 200 B")
+        assert "X-Lock granted to 300" in output
 
     def test_invalid_requests(self, lock_manager):
         # Test lock requests for non-existent transactions
         with pytest.raises(ValueError, match="Transaction not found"):
             lock_manager.process_request_str("SLock 100 A")
+
+        with pytest.raises(ValueError, match="Transaction not found"):
             lock_manager.process_request_str("XLock 100 A")
+
+        with pytest.raises(ValueError, match="Transaction not found"):
             lock_manager.process_request_str("Unlock 100 A")
 
         # Test invalid request types
@@ -226,7 +295,7 @@ class TestSimple:
             lock_manager.process_request_str("Xlock 100 A A")
 
     def test_complex_scenario(self, lock_manager):
-            # Test the exact scenario from the problem statement
+        # Test the exact scenario from the problem statement
         outputs = []
         outputs.append(lock_manager.process_request_str("Start 100"))  # 0
         outputs.append(lock_manager.process_request_str("Start 200"))  # 1
