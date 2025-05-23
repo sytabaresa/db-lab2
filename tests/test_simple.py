@@ -3,7 +3,7 @@ from lock_manager import LockManager, States
 
 
 class TestSimple:
-    """Test of the simple module"""
+    """Test of the simple lock manager module"""
 
     @pytest.fixture(scope="function")  # Explicit function scope
     def lock_manager(self):
@@ -146,10 +146,16 @@ class TestSimple:
         lock_manager.process_request_str("SLock 100 B")
         lock_manager.process_request_str("SLock 200 B")
 
-        # # Test blocked upgrade
-        # output = lock_manager.process_request_str("XLock 100 B")
-        # assert "Waiting for lock upgrade" in output
-        # assert "S-lock held by: 200" in output
+        # Test blocked upgrade
+        output = lock_manager.process_request_str("XLock 100 B")
+        assert "Waiting for lock upgrade" in output
+        assert "S-lock held by: 200" in output
+        
+        assert "Upgraded to XL granted to 100" in lock_manager.process_request_str(
+            "Unlock 200 B")
+
+        assert ("B", States.xlock) in [(k, v)
+                              for k, v in lock_manager.held_locks[100].items()]
 
     def test_unlock(self, lock_manager):
         # Setup
