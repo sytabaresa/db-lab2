@@ -131,6 +131,14 @@ To run tests:
 pytest
 ```
 
+## Design
+
+This implementation is based in these FSMs:
+
+![FSM diagram](./fsm-diagram.png)
+
+
+
 ## License
 
 [MIT License](LICENSE)

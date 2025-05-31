@@ -100,7 +100,7 @@ class LockManager:
         if transaction not in self.transactions:
             return [Command("not_found", transaction, resource)]
 
-        # unlock state
+        # unlocked state
         elif not self.resource_state(resource):
             if req is Events.SLOCK:
                 cmds.extend(
@@ -111,55 +111,77 @@ class LockManager:
             elif req is Events.UNLOCK:
                 cmds.append(
                     Command('not_locked', transaction, resource))
-        # s-Lock state
+
+        # slocked state
         elif self.resource_state(resource)[0][1] is States.slock:
+
+            # other cases of slocked state
             if req is Events.SLOCK:
-                if self.held_resources.get(resource, {}).get(transaction):
+                if self.same_trx(transaction, resource):
                     cmds.append(
                         Command('already_held', transaction, resource, States.slock))
-                else:
-                    cmds.extend(
-                        self.lock_resource(transaction, resource, States.slock))
             elif req is Events.XLOCK:
-                if self.held_resources.get(resource, {}).get(transaction):
-                    if len(self.resource_state(resource)) < 2:
+                if not self.same_trx(transaction, resource):
+                    cmds.extend(
+                        self.wait_for_lock(transaction, resource, States.slock, States.xlock))
+            elif req is Events.UNLOCK:
+                if not self.same_trx(transaction, resource):
+                    cmds.append(
+                        Command('not_locked_by', transaction, resource))
+
+            # simple nested state
+            if len(self.resource_state(resource)) == 1:
+                if req is Events.SLOCK:
+                    if not self.same_trx(transaction, resource):
+                        cmds.extend(
+                            self.lock_resource(transaction, resource, States.slock))
+                elif req is Events.XLOCK:
+                    if self.same_trx(transaction, resource):
                         self.held_locks[transaction][resource] = States.xlock
                         self.held_resources[resource][transaction] = States.xlock
                         cmds.append(
                             Command('upgrade', transaction, resource))
-                    else:
+                elif req is Events.UNLOCK:
+                    if self.same_trx(transaction, resource):
+                        cmds.extend(
+                            self.unlock(transaction, resource, States.slock))
+                        cmds.extend(
+                            self.grant_next_locks(resource))
+
+            # multiple nested state
+            else:
+                if req is Events.SLOCK:
+                    if not self.same_trx(transaction, resource):
+                        cmds.extend(
+                            self.lock_resource(transaction, resource, States.slock))
+                elif req is Events.XLOCK:
+                    if self.same_trx(transaction, resource):
                         cmds.extend(
                             self.wait_for_lock_upgrade(transaction, resource, States.slock, States.xlock))
-                else:
-                    cmds.extend(
-                        self.wait_for_lock(transaction, resource, States.slock, States.xlock))
-            elif req is Events.UNLOCK:
-                if self.held_resources.get(resource, {}).get(transaction) is States.slock:
-                    cmds.extend(
-                        self.unlock(transaction, resource, States.slock))
-                    cmds.extend(
-                        self.grant_next_locks(resource))
-                else:
-                    cmds.append(
-                        Command('not_locked_by', transaction, resource))
-        # x-Lock state
+                elif req is Events.UNLOCK:
+                    if self.same_trx(transaction, resource):
+                        cmds.extend(
+                            self.unlock(transaction, resource, States.slock))
+                        cmds.extend(
+                            self.grant_next_locks(resource))
+        # xlocked state
         elif self.resource_state(resource)[0][1] is States.xlock:
             if req is Events.SLOCK:
-                if self.held_resources.get(resource, {}).get(transaction):
+                if self.same_trx(transaction, resource):
                     cmds.append(
                         Command('already_held', transaction, resource, States.slock))
                 else:
                     cmds.extend(
                         self.wait_for_lock(transaction, resource, States.xlock, States.slock))
             elif req is Events.XLOCK:
-                if self.held_resources.get(resource, {}).get(transaction):
+                if self.same_trx(transaction, resource):
                     cmds.append(
                         Command('already_held', transaction, resource, States.xlock))
                 else:
                     cmds.extend(
                         self.wait_for_lock(transaction, resource, States.xlock, States.xlock))
             if req is Events.UNLOCK:
-                if self.held_resources.get(resource, {}).get(transaction) is States.xlock:
+                if self.same_trx(transaction, resource) is States.xlock:
                     cmds.extend(
                         self.unlock(transaction, resource, States.xlock))
                     cmds.extend(
@@ -169,6 +191,9 @@ class LockManager:
                         Command('not_locked_by', transaction, resource))
 
         return cmds
+
+    def same_trx(self, transaction, resource):
+        return self.held_resources.get(resource, {}).get(transaction)
 
     def resource_state(self, resource: str) -> States:
         return list(self.held_resources.get(resource, {}).items())
