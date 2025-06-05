@@ -135,6 +135,7 @@ pytest
 
 This implementation is based in these FSMs:
 
+
 ![FSM diagram](./fsm-diagram.png)
 
 

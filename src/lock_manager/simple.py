@@ -26,6 +26,23 @@ class Command:
 
 
 class LockManager:
+    """
+    Manages the lifecycle of transactions in the lock management system.
+
+    This method implements the transaction and resource Finite State Machine (FSM) logic,
+    handling multiple events. It tracks transaction state
+    and ensures proper resource unlocking when a transaction ends.
+
+    Args:
+        req (Events): The event triggering the transaction state change
+        transaction (int): The unique identifier for the transaction
+        resource (str)(optional): The name of the resource to lock/unlock 
+
+    Returns:
+        list[Command]: A list of commands representing the transaction state changes
+
+    See see fsm-diagram.png graphs for design reference
+    """
 
     def __init__(self):
         self.held_locks = {}
@@ -35,6 +52,7 @@ class LockManager:
 
     def process_request(self, request: str, transaction: int, resource: str = None) -> list[Command]:
         """Business logic, based in transaction and resource FSMs"""
+
         cmds = []
         try:
             req = Events(request)
@@ -51,6 +69,8 @@ class LockManager:
         return cmds
 
     def transactionFSM(self, req, transaction):
+        """see fsm-diagram.png/transaction FSM for design reference"""
+
         cmds = []
 
         # not_init state
@@ -95,6 +115,8 @@ class LockManager:
         return cmds
 
     def resourceFSM(self, req, transaction, resource):
+        """see fsm-diagram.png/resource FSM for design reference"""
+
         cmds = []
 
         if transaction not in self.transactions:
@@ -112,10 +134,10 @@ class LockManager:
                 cmds.append(
                     Command('not_locked', transaction, resource))
 
-        # slocked state
+        # slocked superstate
         elif self.resource_state(resource)[0][1] is States.slock:
 
-            # other cases of slocked state
+            # other cases of slocked superstate
             if req is Events.SLOCK:
                 if self.same_trx(transaction, resource):
                     cmds.append(
@@ -229,13 +251,14 @@ class LockManager:
         return [Command('unlocked', transaction, resource, lock_type)]
 
     def grant_next_locks(self, resource: str):
-        cmds = []
+        """ Grant all locks waiting (FIFO), there are three cases:
+           1. There are no locks waiting, so no one will be granted.
+           2. The following locks (one or more) are slock, in this case,
+              all these slock will be granted, until a xlock is found or end of the list are reached.
+           3. The following lock is a xlock, in this case only this will be granted.
+        """
 
-        # Grant all locks waiting (FIFO), there are three cases:
-        # 1. there are no locks waiting, so no one will be granted
-        # 2. the following locks (one or more) are slock, in this case,
-        # all these slock will be granted, until a xlock is found or end of the list are reached.
-        # 3. the following lock is a xlock, in this case only this will be granted.
+        cmds = []
         while len(self.resource_fifo.get(resource, {})) > 0:
             transaction, lock_type = list(
                 self.resource_fifo[resource].items())[0]
@@ -261,6 +284,7 @@ class LockManager:
 
     def commands_mapping(self, cmd: Command):
         """Out Adapter for the commands returned from business logic"""
+
         mapping = {
             'cmd_not_valid': lambda cmd: IndexError("Command not valid"),
             'transaction_started': lambda cmd: f"Start {cmd.transaction} : Transaction {cmd.transaction} started",
@@ -291,6 +315,7 @@ class LockManager:
 
     def process_request_str(self, request_str: str) -> list[str]:
         """Adapter for business logic, IN/OUT conversion"""
+
         # Using regex groups
         pattern = r"^(\w+) (\d+) ?(\w+)?_*$"
         match = re.search(pattern, request_str)
