@@ -2,6 +2,7 @@
 
 A simple transaction lock manager implementation that processes lock requests through a command-line interface.
 
+You can find the public repo here: https://github.com/sytabaresa/db-lab2
 ## Overview
 
 This project implements a lock manager for database transactions, allowing you to:
