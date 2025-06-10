@@ -38,12 +38,27 @@ pip install -r requirements.txt
 
 ## Usage
 
+### Creating in venv (optional)
+You can create a python venv with:
+
+```bash
+python3 -m venv venv 
+source venv/bin/activate 
+```
+This is good for development.
+
+For deactivate onlhy execute:
+```bash
+deactivate 
+```
+
 ### Running the Lock Manager CLI
 
 You can run the lock manager in interactive mode:
 
 ```bash
-python src/cli/simple.py
+PYTHONPATH=./src python src/cli/simple.py # if not using venv
+python src/cli/simple.py # using venv
 ```
 
 Or process commands from a file:
@@ -72,8 +87,8 @@ The lock manager accepts the following commands:
 | ---------------------- | ---------------------------- | ------------------------------------------------------------------------------------ |
 | Start Transaction      | `Start <txn_id>`             | Starts a new transaction with the given ID                                           |
 | End Transaction        | `End <txn_id>`               | Ends an active transaction, unlock all locked resources and clean waiting locks      |
-| Request Share Lock     | `SLock <txn_id> <resource>`  | Requests a Read (shared) lock on an resource                                         |
-| Request eXclusive Lock | `XLock <txn_id> <resource>`  | Requests an Write (exclusive) lock on an resource, or updates a previous shared lock |
+| Request Share Lock     | `SLock <txn_id> <resource>`  | Requests a Read (shared) lock on a resource                                         |
+| Request eXclusive Lock | `XLock <txn_id> <resource>`  | Requests a Write (exclusive) lock on a resource, or updates a previous shared lock |
 | Unlock a resource      | `Unlock <txn_id> <resource>` | Requests an Unlock a previous locked resource, can be shared or exclusive            |
 
 #### Examples:
